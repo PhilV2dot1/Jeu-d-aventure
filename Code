@@ -1,0 +1,337 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract AventureDuTresor {
+    
+    struct Joueur {
+        string nom;
+        uint256 salle;
+        uint256 pointsDeVie;
+        uint256 force;
+        bool[] inventaire; // [cle, epee, potion, torche, carte]
+        bool partieTerminee;
+        bool aGagne;
+        uint256 score;
+        bool existe;
+    }
+    
+    mapping(address => Joueur) public joueurs;
+    
+    // Événements
+    event PartieCommencee(address indexed joueur, string nom);
+    event ActionEffectuee(address indexed joueur, string action, string resultat);
+    event ObjetTrouve(address indexed joueur, string objet);
+    event CombatGagne(address indexed joueur, string ennemi, uint256 pvRestants);
+    event PartieTerminee(address indexed joueur, bool victoire, uint256 score);
+    
+    // Démarrer une nouvelle partie
+    function commencerPartie(string memory _nom) public {
+        require(!joueurs[msg.sender].existe || joueurs[msg.sender].partieTerminee, 
+                "Vous avez deja une partie en cours");
+        require(bytes(_nom).length > 0, "Le nom ne peut pas etre vide");
+        
+        Joueur storage joueur = joueurs[msg.sender];
+        joueur.nom = _nom;
+        joueur.salle = 1;
+        joueur.pointsDeVie = 100;
+        joueur.force = 10;
+        joueur.inventaire = new bool[](5); // [cle, epee, potion, torche, carte]
+        joueur.partieTerminee = false;
+        joueur.aGagne = false;
+        joueur.score = 0;
+        joueur.existe = true;
+        
+        emit PartieCommencee(msg.sender, _nom);
+    }
+    
+    // Explorer la salle actuelle
+    function explorer() public returns (string memory) {
+        require(joueurs[msg.sender].existe, "Commencez d'abord une partie");
+        require(!joueurs[msg.sender].partieTerminee, "Votre partie est terminee");
+        
+        Joueur storage joueur = joueurs[msg.sender];
+        string memory description;
+        
+        if (joueur.salle == 1) {
+            description = "Salle d'entree : Vous voyez deux portes. Nord: Couloir sombre. Est: Armurerie.";
+        } else if (joueur.salle == 2) {
+            description = "Couloir sombre : Il fait noir. Vous entendez des bruits etranges. Sud: Entree. Nord: Salle du gardien.";
+        } else if (joueur.salle == 3) {
+            description = "Armurerie : Des armes anciennes decorent les murs. Ouest: Entree. Nord: Bibliotheque.";
+        } else if (joueur.salle == 4) {
+            description = "Salle du gardien : Un squelette garde une porte verrouillee. Sud: Couloir. Est: Salle du tresor (verrouillee).";
+        } else if (joueur.salle == 5) {
+            description = "Bibliotheque : Des livres poussiéreux partout. Sud: Armurerie. Est: Laboratoire.";
+        } else if (joueur.salle == 6) {
+            description = "Laboratoire : Tubes et potions mysterieuses. Ouest: Bibliotheque.";
+        } else if (joueur.salle == 7) {
+            description = "Salle du tresor : Un coffre doré brille au centre ! Ouest: Salle du gardien.";
+        } else {
+            description = "Vous êtes perdu...";
+        }
+        
+        return description;
+    }
+    
+    // Se déplacer dans une direction
+    function deplacer(string memory _direction) public returns (string memory) {
+        require(joueurs[msg.sender].existe, "Commencez d'abord une partie");
+        require(!joueurs[msg.sender].partieTerminee, "Votre partie est terminee");
+        
+        Joueur storage joueur = joueurs[msg.sender];
+        uint256 ancienneSalle = joueur.salle;
+        bytes32 dirHash = keccak256(abi.encodePacked(_direction));
+        
+        // Salle 1 - Entrée
+        if (joueur.salle == 1) {
+            if (dirHash == keccak256(abi.encodePacked("nord"))) {
+                joueur.salle = 2;
+            } else if (dirHash == keccak256(abi.encodePacked("est"))) {
+                joueur.salle = 3;
+            }
+        }
+        // Salle 2 - Couloir sombre
+        else if (joueur.salle == 2) {
+            if (dirHash == keccak256(abi.encodePacked("sud"))) {
+                joueur.salle = 1;
+            } else if (dirHash == keccak256(abi.encodePacked("nord"))) {
+                if (!joueur.inventaire[3]) { // Pas de torche
+                    joueur.pointsDeVie -= 20;
+                    emit ActionEffectuee(msg.sender, "deplacer", "Vous trebucez dans le noir ! -20 PV");
+                    if (joueur.pointsDeVie <= 0) {
+                        terminerPartie(false);
+                        return "Vous etes mort dans l'obscurite...";
+                    }
+                    return "Il fait trop sombre ! Vous perdez 20 PV.";
+                }
+                joueur.salle = 4;
+            }
+        }
+        // Salle 3 - Armurerie
+        else if (joueur.salle == 3) {
+            if (dirHash == keccak256(abi.encodePacked("ouest"))) {
+                joueur.salle = 1;
+            } else if (dirHash == keccak256(abi.encodePacked("nord"))) {
+                joueur.salle = 5;
+            }
+        }
+        // Salle 4 - Salle du gardien
+        else if (joueur.salle == 4) {
+            if (dirHash == keccak256(abi.encodePacked("sud"))) {
+                joueur.salle = 2;
+            } else if (dirHash == keccak256(abi.encodePacked("est"))) {
+                if (!joueur.inventaire[0]) { // Pas de clé
+                    return "La porte est verrouillee. Vous avez besoin d'une cle.";
+                }
+                joueur.salle = 7;
+            }
+        }
+        // Salle 5 - Bibliothèque
+        else if (joueur.salle == 5) {
+            if (dirHash == keccak256(abi.encodePacked("sud"))) {
+                joueur.salle = 3;
+            } else if (dirHash == keccak256(abi.encodePacked("est"))) {
+                joueur.salle = 6;
+            }
+        }
+        // Salle 6 - Laboratoire
+        else if (joueur.salle == 6) {
+            if (dirHash == keccak256(abi.encodePacked("ouest"))) {
+                joueur.salle = 5;
+            }
+        }
+        // Salle 7 - Salle du trésor
+        else if (joueur.salle == 7) {
+            if (dirHash == keccak256(abi.encodePacked("ouest"))) {
+                joueur.salle = 4;
+            }
+        }
+        
+        if (joueur.salle != ancienneSalle) {
+            joueur.score += 10;
+            emit ActionEffectuee(msg.sender, "deplacer", _direction);
+            return "Vous vous deplacez...";
+        }
+        
+        return "Vous ne pouvez pas aller dans cette direction.";
+    }
+    
+    // Chercher des objets
+    function chercher() public returns (string memory) {
+        require(joueurs[msg.sender].existe, "Commencez d'abord une partie");
+        require(!joueurs[msg.sender].partieTerminee, "Votre partie est terminee");
+        
+        Joueur storage joueur = joueurs[msg.sender];
+        
+        // Salle 3 - Armurerie : Épée
+        if (joueur.salle == 3 && !joueur.inventaire[1]) {
+            joueur.inventaire[1] = true;
+            joueur.force += 15;
+            joueur.score += 50;
+            emit ObjetTrouve(msg.sender, "epee");
+            return "Vous trouvez une epee ! Force +15";
+        }
+        // Salle 5 - Bibliothèque : Carte
+        else if (joueur.salle == 5 && !joueur.inventaire[4]) {
+            joueur.inventaire[4] = true;
+            joueur.score += 30;
+            emit ObjetTrouve(msg.sender, "carte");
+            return "Vous trouvez une carte du donjon !";
+        }
+        // Salle 6 - Laboratoire : Potion
+        else if (joueur.salle == 6 && !joueur.inventaire[2]) {
+            joueur.inventaire[2] = true;
+            joueur.score += 40;
+            emit ObjetTrouve(msg.sender, "potion");
+            return "Vous trouvez une potion de soin !";
+        }
+        // Salle 2 - Couloir : Torche
+        else if (joueur.salle == 2 && !joueur.inventaire[3]) {
+            joueur.inventaire[3] = true;
+            joueur.score += 20;
+            emit ObjetTrouve(msg.sender, "torche");
+            return "Vous trouvez une torche !";
+        }
+        
+        return "Vous ne trouvez rien d'interessant ici.";
+    }
+    
+    // Combattre le gardien
+    function combattre() public returns (string memory) {
+        require(joueurs[msg.sender].existe, "Commencez d'abord une partie");
+        require(!joueurs[msg.sender].partieTerminee, "Votre partie est terminee");
+        
+        Joueur storage joueur = joueurs[msg.sender];
+        
+        if (joueur.salle == 4 && !joueur.inventaire[0]) {
+            // Combat avec le gardien squelette
+            uint256 forceMonstre = 20;
+            
+            if (joueur.force >= forceMonstre) {
+                joueur.inventaire[0] = true; // Obtenir la clé
+                joueur.pointsDeVie -= 10;
+                joueur.score += 100;
+                emit CombatGagne(msg.sender, "Gardien Squelette", joueur.pointsDeVie);
+                emit ObjetTrouve(msg.sender, "cle");
+                return "Vous vainquez le gardien ! Vous obtenez la cle. -10 PV";
+            } else {
+                joueur.pointsDeVie -= 40;
+                emit ActionEffectuee(msg.sender, "combattre", "Defaite");
+                if (joueur.pointsDeVie <= 0) {
+                    terminerPartie(false);
+                    return "Le gardien vous terrasse...";
+                }
+                return "Vous etes trop faible ! -40 PV. Trouvez une arme !";
+            }
+        }
+        
+        return "Il n'y a rien a combattre ici.";
+    }
+    
+    // Utiliser la potion
+    function utiliserPotion() public returns (string memory) {
+        require(joueurs[msg.sender].existe, "Commencez d'abord une partie");
+        require(!joueurs[msg.sender].partieTerminee, "Votre partie est terminee");
+        
+        Joueur storage joueur = joueurs[msg.sender];
+        
+        if (joueur.inventaire[2]) {
+            joueur.inventaire[2] = false;
+            joueur.pointsDeVie = joueur.pointsDeVie + 50 > 100 ? 100 : joueur.pointsDeVie + 50;
+            emit ActionEffectuee(msg.sender, "utiliserPotion", "Soigne +50 PV");
+            return "Vous utilisez la potion. +50 PV !";
+        }
+        
+        return "Vous n'avez pas de potion.";
+    }
+    
+    // Ouvrir le coffre au trésor
+    function ouvrirCoffre() public returns (string memory) {
+        require(joueurs[msg.sender].existe, "Commencez d'abord une partie");
+        require(!joueurs[msg.sender].partieTerminee, "Votre partie est terminee");
+        
+        Joueur storage joueur = joueurs[msg.sender];
+        
+        if (joueur.salle == 7) {
+            joueur.score += 200;
+            terminerPartie(true);
+            return "VICTOIRE ! Vous avez trouve le tresor legendaire !";
+        }
+        
+        return "Il n'y a pas de coffre ici.";
+    }
+    
+    // Terminer la partie
+    function terminerPartie(bool victoire) private {
+        Joueur storage joueur = joueurs[msg.sender];
+        joueur.partieTerminee = true;
+        joueur.aGagne = victoire;
+        
+        // Bonus de score
+        if (victoire) {
+            joueur.score += joueur.pointsDeVie * 2; // Bonus PV restants
+        }
+        
+        emit PartieTerminee(msg.sender, victoire, joueur.score);
+    }
+    
+    // Obtenir l'inventaire
+    function obtenirInventaire() public view returns (
+        bool cle,
+        bool epee,
+        bool potion,
+        bool torche,
+        bool carte
+    ) {
+        require(joueurs[msg.sender].existe, "Commencez d'abord une partie");
+        
+        Joueur storage joueur = joueurs[msg.sender];
+        return (
+            joueur.inventaire[0],
+            joueur.inventaire[1],
+            joueur.inventaire[2],
+            joueur.inventaire[3],
+            joueur.inventaire[4]
+        );
+    }
+    
+    // Obtenir les statistiques du joueur
+    function obtenirStats() public view returns (
+        string memory nom,
+        uint256 salle,
+        uint256 pointsDeVie,
+        uint256 force,
+        uint256 score,
+        bool partieTerminee,
+        bool aGagne
+    ) {
+        require(joueurs[msg.sender].existe, "Commencez d'abord une partie");
+        
+        Joueur storage joueur = joueurs[msg.sender];
+        return (
+            joueur.nom,
+            joueur.salle,
+            joueur.pointsDeVie,
+            joueur.force,
+            joueur.score,
+            joueur.partieTerminee,
+            joueur.aGagne
+        );
+    }
+    
+    // Abandonner la partie
+    function abandonner() public {
+        require(joueurs[msg.sender].existe, "Vous n'avez pas de partie en cours");
+        require(!joueurs[msg.sender].partieTerminee, "Votre partie est deja terminee");
+        
+        terminerPartie(false);
+    }
+    
+    // Obtenir la carte (si possédée)
+    function afficherCarte() public view returns (string memory) {
+        require(joueurs[msg.sender].existe, "Commencez d'abord une partie");
+        require(joueurs[msg.sender].inventaire[4], "Vous n'avez pas de carte");
+        
+        return "Carte: [1:Entree]-[2:Couloir]-[4:Gardien]-[7:TRESOR] | [1:Entree]-[3:Armurerie]-[5:Biblio]-[6:Labo]";
+    }
+}

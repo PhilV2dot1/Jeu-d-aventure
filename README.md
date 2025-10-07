@@ -2,6 +2,7 @@
 
 Contrat sur celo : 0xe9eE09C90D751Dd58afBbf21a8DdA09824d0830E
 
+
 Comment jouer :
 1. Démarrer :
 soliditycommencerPartie("VotreNom")
